@@ -1293,7 +1293,7 @@ impl FileDialog {
             // Check if files were dropped
             if let Some(dropped_file) = i.raw.dropped_files.last() {
                 if let Some(path) = &dropped_file.path {
-                    if path.is_dir() {
+                    if self.vfs.is_dir(path) {
                         // If we dropped a directory, go there
                         self.load_directory(path.as_path());
                         repaint = true;
@@ -2582,13 +2582,13 @@ impl FileDialog {
 
         let path = item.as_path();
 
-        let file_stem = if path.is_file() {
+        let file_stem = if item.is_file() {
             path.file_stem().and_then(|f| f.to_str()).unwrap_or("")
         } else {
             item.file_name()
         };
 
-        let extension = if path.is_file() {
+        let extension = if item.is_file() {
             path.extension().map_or(String::new(), |ext| {
                 format!(".{}", ext.to_str().unwrap_or(""))
             })
@@ -2979,7 +2979,7 @@ impl FileDialog {
     fn gen_initial_directory(&self, path: &Path) -> PathBuf {
         let mut path = self.canonicalize_path(path);
 
-        if path.is_file() {
+        if self.vfs.is_file(&path) {
             if let Some(parent) = path.parent() {
                 path = parent.to_path_buf();
             }
@@ -3026,11 +3026,11 @@ impl FileDialog {
             let mut full_path = x.to_path_buf();
             full_path.push(self.file_name_input.as_str());
 
-            if full_path.is_dir() {
+            if self.vfs.is_dir(&full_path) {
                 return Some(self.config.labels.err_directory_exists.clone());
             }
 
-            if !self.config.allow_file_overwrite && full_path.is_file() {
+            if !self.config.allow_file_overwrite && self.vfs.is_file(&full_path) {
                 return Some(self.config.labels.err_file_exists.clone());
             }
         } else {
@@ -3174,7 +3174,7 @@ impl FileDialog {
 
         let path = self.canonicalize_path(&PathBuf::from(&self.path_edit_value));
 
-        if self.mode == DialogMode::SelectFile && path.is_file() {
+        if self.mode == DialogMode::SelectFile && self.vfs.is_file(&path) {
             self.state = DialogState::Selected(path);
             return;
         }
@@ -3188,7 +3188,7 @@ impl FileDialog {
         if self.mode == DialogMode::SaveFile
             && (path.extension().is_some()
                 || self.config.allow_path_edit_to_save_file_without_extension)
-            && !path.is_dir()
+            && !self.vfs.is_dir(&path)
             && path.parent().is_some_and(std::path::Path::exists)
         {
             self.submit_save_file(path);
