@@ -28,6 +28,8 @@ indexmap = { version = "2.7.0", features = ["serde"], optional = true }
 image-meta = { version = "0.1.2", optional = true }
 chrono = { version = "0.4.39", optional = true }
 
+poll-promise = "0.3.0"
+
 [dev-dependencies]
 eframe = { version = "0.30.0", default-features = false, features = [
     "glow",

@@ -4,7 +4,7 @@ use crate::config::{
 };
 use crate::create_directory_dialog::CreateDirectoryDialog;
 use crate::data::{
-    DirectoryContent, DirectoryContentState, DirectoryEntry, Disk, Disks, UserDirectories,
+    DirectoryContent, DirectoryEntry, Disk, Disks, UserDirectories,
 };
 use crate::modals::{FileDialogModal, ModalAction, ModalState, OverwriteFileModal};
 use crate::{FileSystem, NativeFileSystem};
@@ -2158,12 +2158,12 @@ impl FileDialog {
     fn update_directory_content(&mut self, ui: &mut egui::Ui) -> bool {
         const SHOW_SPINNER_AFTER: f32 = 0.2;
 
-        match self.directory_content.update() {
-            DirectoryContentState::Pending(timestamp) => {
+        match self.directory_content.content.ready_mut() {
+            None => {
                 let now = std::time::SystemTime::now();
 
                 if now
-                    .duration_since(*timestamp)
+                    .duration_since(self.directory_content.creation_time)
                     .unwrap_or_default()
                     .as_secs_f32()
                     > SHOW_SPINNER_AFTER
@@ -2175,12 +2175,12 @@ impl FileDialog {
                 ui.ctx().request_repaint();
 
                 true
-            }
-            DirectoryContentState::Errored(err) => {
+            },
+            Some(Err(err)) => {
                 ui.centered_and_justified(|ui| ui.colored_label(ui.visuals().error_fg_color, err));
                 true
             }
-            DirectoryContentState::Finished => {
+            Some(Ok(_content)) => {
                 if self.mode == DialogMode::SelectDirectory {
                     if let Some(dir) = self.current_directory() {
                         let mut dir_entry = DirectoryEntry::from_path(&self.config, dir, &*self.config.file_system);
@@ -2190,7 +2190,6 @@ impl FileDialog {
 
                 false
             }
-            DirectoryContentState::Success => false,
         }
     }
 

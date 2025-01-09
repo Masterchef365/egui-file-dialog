@@ -1,10 +1,11 @@
 use crate::config::{FileDialogConfig, FileFilter};
 use crate::FileSystem;
 use egui::mutex::Mutex;
+use poll_promise::Promise;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 use std::time::SystemTime;
-use std::{io, thread};
+use std::io;
 
 /// Contains the metadata of a directory item.
 #[derive(Debug, Default, Clone)]
@@ -149,6 +150,7 @@ impl DirectoryEntry {
     }
 }
 
+/*
 /// Contains the state of the directory content.
 #[derive(Debug, PartialEq, Eq)]
 pub enum DirectoryContentState {
@@ -164,6 +166,7 @@ pub enum DirectoryContentState {
     /// The value contains the error message.
     Errored(String),
 }
+*/
 
 type DirectoryContentReceiver =
     Option<Arc<Mutex<mpsc::Receiver<Result<Vec<DirectoryEntry>, std::io::Error>>>>>;
@@ -171,25 +174,29 @@ type DirectoryContentReceiver =
 /// Contains the content of a directory.
 pub struct DirectoryContent {
     /// Current state of the directory content.
-    state: DirectoryContentState,
-    /// The loaded directory contents.
-    content: Vec<DirectoryEntry>,
-    /// Receiver when the content is loaded on a different thread.
-    content_recv: DirectoryContentReceiver,
+    pub(crate) content: Promise<Result<Vec<DirectoryEntry>, String>>,
+    /// Timestamp of Promise creation
+    pub(crate) creation_time: SystemTime,
 }
 
 impl Default for DirectoryContent {
     fn default() -> Self {
         Self {
-            state: DirectoryContentState::Success,
-            content: Vec::new(),
-            content_recv: None,
+            content: Promise::from_ready(Ok(vec![])),
+            creation_time: SystemTime::now(),
+            //state: DirectoryContentState::Success,
+            //content: Vec::new(),
+            //content_recv: None,
         }
     }
 }
 
 impl std::fmt::Debug for DirectoryContent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // TODO
+        f.debug_struct("DirectoryContent")
+            .finish()
+        /*
         f.debug_struct("DirectoryContent")
             .field("state", &self.state)
             .field("content", &self.content)
@@ -202,6 +209,7 @@ impl std::fmt::Debug for DirectoryContent {
                 },
             )
             .finish()
+        */
     }
 }
 
@@ -229,19 +237,17 @@ impl DirectoryContent {
         file_filter: Option<&FileFilter>,
         file_system: Arc<dyn FileSystem + Send + Sync + 'static>,
     ) -> Self {
-        let (tx, rx) = mpsc::channel();
-
         let c = config.clone();
         let p = path.to_path_buf();
         let f = file_filter.cloned();
-        thread::spawn(move || {
-            let _ = tx.send(load_directory(&c, &p, include_files, f.as_ref(), &*file_system));
+
+        let content = Promise::spawn_thread("File dialog load", move || {
+            load_directory(&c, &p, include_files, f.as_ref(), &*file_system).map_err(|e| e.to_string())
         });
 
         Self {
-            state: DirectoryContentState::Pending(SystemTime::now()),
-            content: Vec::new(),
-            content_recv: Some(Arc::new(Mutex::new(rx))),
+            content,
+            creation_time: SystemTime::now(),
         }
     }
 
@@ -252,65 +258,10 @@ impl DirectoryContent {
         file_filter: Option<&FileFilter>,
         file_system: &dyn FileSystem,
     ) -> Self {
-        match load_directory(config, path, include_files, file_filter, file_system) {
-            Ok(c) => Self {
-                state: DirectoryContentState::Success,
-                content: c,
-                content_recv: None,
-            },
-            Err(err) => Self {
-                state: DirectoryContentState::Errored(err.to_string()),
-                content: Vec::new(),
-                content_recv: None,
-            },
+        Self {
+            content: Promise::from_ready(load_directory(config, path, include_files, file_filter, file_system).map_err(|e| e.to_string())),
+            creation_time: SystemTime::now(),
         }
-    }
-
-    pub fn update(&mut self) -> &DirectoryContentState {
-        if self.state == DirectoryContentState::Finished {
-            self.state = DirectoryContentState::Success;
-        }
-
-        if !matches!(self.state, DirectoryContentState::Pending(_)) {
-            return &self.state;
-        }
-
-        self.update_pending_state()
-    }
-
-    fn update_pending_state(&mut self) -> &DirectoryContentState {
-        let rx = std::mem::take(&mut self.content_recv);
-        let mut update_content_recv = true;
-
-        if let Some(recv) = &rx {
-            let value = recv.lock().try_recv();
-            match value {
-                Ok(result) => match result {
-                    Ok(content) => {
-                        self.state = DirectoryContentState::Finished;
-                        self.content = content;
-                        update_content_recv = false;
-                    }
-                    Err(err) => {
-                        self.state = DirectoryContentState::Errored(err.to_string());
-                        update_content_recv = false;
-                    }
-                },
-                Err(err) => {
-                    if mpsc::TryRecvError::Disconnected == err {
-                        self.state =
-                            DirectoryContentState::Errored("thread ended unexpectedly".to_owned());
-                        update_content_recv = false;
-                    }
-                }
-            }
-        }
-
-        if update_content_recv {
-            self.content_recv = rx;
-        }
-
-        &self.state
     }
 
     /// Returns an iterator in the given range of the directory cotnents.
@@ -319,15 +270,38 @@ impl DirectoryContent {
         &mut self,
         range: std::ops::Range<usize>,
     ) -> impl Iterator<Item = &mut DirectoryEntry> {
-        self.content[range].iter_mut()
+        match self.content.ready_mut() {
+            Some(Ok(dirs)) => &mut dirs[range],
+            _ => &mut [],
+        }.iter_mut()
+    }
+
+    /// Returns an iterator in the given range of the directory cotnents.
+    /// No filters are applied using this iterator.
+    pub fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = &mut DirectoryEntry> {
+        match self.content.ready_mut() {
+            Some(Ok(dirs)) => &mut dirs[..],
+            _ => &mut [],
+        }.iter_mut()
+    }
+
+    /// Returns an iterator over the directory cotnents.
+    pub fn iter(
+        &self,
+    ) -> impl Iterator<Item = &DirectoryEntry> {
+        match self.content.ready() {
+            Some(Ok(dirs)) => &dirs[..],
+            _ => &[],
+        }.iter()
     }
 
     pub fn filtered_iter<'s>(
         &'s self,
         search_value: &'s str,
     ) -> impl Iterator<Item = &'s DirectoryEntry> + 's {
-        self.content
-            .iter()
+        self.iter()
             .filter(|p| apply_search_value(p, search_value))
     }
 
@@ -335,26 +309,30 @@ impl DirectoryContent {
         &'s mut self,
         search_value: &'s str,
     ) -> impl Iterator<Item = &'s mut DirectoryEntry> + 's {
-        self.content
-            .iter_mut()
+        self.iter_mut()
             .filter(|p| apply_search_value(p, search_value))
     }
 
     /// Marks each element in the content as unselected.
     pub fn reset_multi_selection(&mut self) {
-        for item in &mut self.content {
+        for item in self.iter_mut() {
             item.selected = false;
         }
     }
 
     /// Returns the number of elements inside the directory.
     pub fn len(&self) -> usize {
-        self.content.len()
+        match self.content.ready() {
+            Some(Ok(content)) => content.len(),
+            _ => 0,
+        }
     }
 
     /// Pushes a new item to the content.
     pub fn push(&mut self, item: DirectoryEntry) {
-        self.content.push(item);
+        if let Some(Ok(content)) = self.content.ready_mut() {
+            content.push(item);
+        }
     }
 }
 

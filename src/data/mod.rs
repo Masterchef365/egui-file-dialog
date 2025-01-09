@@ -1,5 +1,5 @@
 mod directory_content;
-pub use directory_content::{DirectoryContent, DirectoryContentState, DirectoryEntry, Metadata};
+pub use directory_content::{DirectoryContent, DirectoryEntry, Metadata};
 
 mod disks;
 pub use disks::{Disk, Disks};
