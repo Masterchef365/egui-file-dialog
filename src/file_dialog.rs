@@ -2903,7 +2903,7 @@ impl FileDialog {
 
     /// Refreshes the dialog.
     /// Including the user directories, system disks and currently open directory.
-    fn refresh(&mut self) {
+    pub fn refresh(&mut self) {
         self.user_directories = self.config.file_system.user_dirs(self.config.canonicalize_paths);
         self.system_disks = self.config.file_system.get_disks(self.config.canonicalize_paths);
 
@@ -3245,7 +3245,7 @@ impl FileDialog {
     ///
     /// In most cases, this function should not be called directly.
     /// Instead, `refresh` should be used to reload all other data like system disks too.
-    fn reload_directory(&mut self) {
+    pub fn reload_directory(&mut self) {
         if let Some(x) = self.current_directory() {
             self.load_directory_content(x.to_path_buf().as_path());
         }
